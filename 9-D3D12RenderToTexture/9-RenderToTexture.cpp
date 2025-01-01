@@ -1,4 +1,5 @@
 #include <SDKDDKVer.h>
+#include <SDKDDKVer.h>
 #define WIN32_LEAN_AND_MEAN // 从 Windows 头中排除极少使用的资料
 #include <windows.h>
 #include <tchar.h>
@@ -258,6 +259,27 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 	ComPtr<ID3D12DescriptorHeap>		pIDHSampleQuad;
 	ComPtr<ID3D12Resource>				pIVBQuad;	//QUAD顶点缓冲
 	ComPtr<ID3D12Resource>			    pICBMVO;	//常量缓冲
+
+
+	//Lihw. 双倍宽纹理
+	struct dbwQuad {
+
+		//复制上面的QUAD需要的资源
+		ComPtr<ID3D12RootSignature>			pIRS_DBWQuad;
+		ComPtr<ID3D12PipelineState>			pIPS_DBWOQuad;
+		ComPtr<ID3D12DescriptorHeap>		pIDH_DBWQuad;
+		ComPtr<ID3D12DescriptorHeap>		pIDH_DBWSampleQuad;
+		ComPtr<ID3D12Resource>				pIVB_DBWQuad;	//QUAD顶点缓冲
+		ComPtr<ID3D12Resource>			    pICB_DBWMVO;	//常量缓冲
+
+		ComPtr<ID3D12Resource>				pIRes_DBWRenderTarget;  //Render Target
+		ComPtr<ID3D12Resource>				pIDS_DBWTex;
+		ComPtr<ID3D12DescriptorHeap>		pIDH_DBWRTVTex;
+		ComPtr<ID3D12DescriptorHeap>		pIDH_DBWDSVTex;
+
+		//我们需要把SWAPCHAIN的Buffer也要作为纹理使用，需要创建描述符，放在pIDH_DBWRTVTex堆里？
+		ComPtr<ID3D12Resource>				pIDS_DBW_SWAPCHAIN_Tex;
+	}DBWQuad;
 
 	D3D12_VERTEX_BUFFER_VIEW			stVBViewQuad = {};
 	ST_GRS_CB_MVO*						pMOV = nullptr;
@@ -1532,8 +1554,9 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 						, mxOrthographic);
 
 					// 设置矩形框的大小，单位同样是像素
+					XMMATRIX tmp = XMMatrixScaling(320.0f, 240.0f, 1.0f);
 					xmMVO = XMMatrixMultiply(
-						XMMatrixScaling(320.0f, 240.0f, 1.0f)
+						tmp
 						, xmMVO);
 
 					//设置MVO
@@ -1753,7 +1776,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
 		if (VK_TAB == n16KeyCode)
 		{//按Tab键还原摄像机位置
-			g_f3EyePos1 = XMFLOAT3(0.0f, 0.0f, -10.0f); //眼睛位置
+			g_f3EyePos1 = XMFLOAT3(0.0f, 5.0f, -10.0f); //眼睛位置
 			g_f3LockAt1 = XMFLOAT3(0.0f, 0.0f, 0.0f);    //眼睛所盯的位置
 			g_f3HeapUp1 = XMFLOAT3(0.0f, 1.0f, 0.0f);    //头部正上方位置
 		}
