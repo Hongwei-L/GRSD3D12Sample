@@ -240,25 +240,23 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 	ComPtr<ID3D12CommandAllocator>		pICmdAlloc;
 	ComPtr<ID3D12GraphicsCommandList>	pICmdList;
 
-	CAtlArray<HANDLE>					arHWaited;
-	CAtlArray<HANDLE>					arHSubThread;
 
-	ComPtr<ID3DBlob>					pIVSShader;
-	ComPtr<ID3DBlob>					pIPSShader;
+	//Lihw 物体渲染pass的 根签名、PSO，注意：这个代码的渲染到纹理和渲染到主屏共用了完全相同的：1）模型和布局 2）PSO，只是采用了不同的projection
 	ComPtr<ID3D12RootSignature>			pIRSPass1;
 	ComPtr<ID3D12PipelineState>			pIPSOPass1;
 
+	//Lihw 既做渲染目标又做纹理的资源，包括伴随的深度缓冲资源，及两个资源的描述符堆
 	ComPtr<ID3D12Resource>				pIResRenderTarget;  //Render Target
 	ComPtr<ID3D12Resource>				pIDSTex;
 	ComPtr<ID3D12DescriptorHeap>		pIDHRTVTex;
 	ComPtr<ID3D12DescriptorHeap>		pIDHDSVTex;
 
-
+	//Lihw. Quad，四方形的根签名、PSO、描述符堆、Vertex和CB资源
 	ComPtr<ID3D12RootSignature>			pIRSQuad;
 	ComPtr<ID3D12PipelineState>			pIPSOQuad;
 	ComPtr<ID3D12DescriptorHeap>		pIDHQuad;
 	ComPtr<ID3D12DescriptorHeap>		pIDHSampleQuad;
-	ComPtr<ID3D12Resource>				pIVBQuad;
+	ComPtr<ID3D12Resource>				pIVBQuad;	//QUAD顶点缓冲
 	ComPtr<ID3D12Resource>			    pICBMVO;	//常量缓冲
 
 	D3D12_VERTEX_BUFFER_VIEW			stVBViewQuad = {};
@@ -613,6 +611,9 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 			TCHAR pszShaderFileName[MAX_PATH] = {};
 			StringCchPrintf(pszShaderFileName, MAX_PATH, _T("%s9-D3D12RenderToTexture\\Shader\\TextureCube.hlsl"), pszAppPath);
 
+			ComPtr<ID3DBlob>					pIVSShader;
+			ComPtr<ID3DBlob>					pIPSShader;
+
 			GRS_THROW_IF_FAILED(D3DCompileFromFile(pszShaderFileName, nullptr, nullptr
 				, "VSMain", "vs_5_0", compileFlags, 0, &pIVSShader, nullptr));
 			GRS_THROW_IF_FAILED(D3DCompileFromFile(pszShaderFileName, nullptr, nullptr
@@ -782,6 +783,7 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 			GRS_SET_D3D12_DEBUGNAME_COMPTR(pIPSOQuad);
 		}
 
+		// LIhw. 离屏渲染目标
 		// 创建渲染目标纹理
 		{
 			D3D12_RESOURCE_DESC stRenderTargetResDesc = {};
@@ -1543,6 +1545,7 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 					ID3D12DescriptorHeap* ppHeapsQuad[] = { pIDHQuad.Get(),pIDHSampleQuad.Get() };
 					pICmdList->SetDescriptorHeaps(_countof(ppHeapsQuad), ppHeapsQuad);
 
+					//LIhw. 设置SRV、CBV和Sampler，跟矩形根签名以及创建的三种资源对应，通过GraphicRootDescriptorTable的槽位传递
 					D3D12_GPU_DESCRIPTOR_HANDLE stGPUCBVHandle(pIDHQuad->GetGPUDescriptorHandleForHeapStart());
 					pICmdList->SetGraphicsRootDescriptorTable(0, stGPUCBVHandle);
 					stGPUCBVHandle.ptr += nSRVDescriptorSize;
