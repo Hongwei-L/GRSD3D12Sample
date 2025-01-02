@@ -260,30 +260,35 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 	ComPtr<ID3D12Resource>				pIVBQuad;	//QUAD顶点缓冲
 	ComPtr<ID3D12Resource>			    pICBMVO;	//常量缓冲
 
+	D3D12_VERTEX_BUFFER_VIEW			stVBViewQuad = {};
+	ST_GRS_CB_MVO*						pMOV = nullptr;
+	SIZE_T								szCBMOVBuf = GRS_UPPER(sizeof(ST_GRS_CB_MVO), 256);
 
 	//Lihw. 双倍宽纹理
+	int  DBW_width = iWndWidth / 4 * 2;
+	int  DBW_Height = iWndHeight / 4;
 	struct dbwQuad {
 
 		//复制上面的QUAD需要的资源
 		ComPtr<ID3D12RootSignature>			pIRS_DBWQuad;
 		ComPtr<ID3D12PipelineState>			pIPS_DBWOQuad;
-		ComPtr<ID3D12DescriptorHeap>		pIDH_DBWQuad;
+		ComPtr<ID3D12DescriptorHeap>		pIDH_DBWQuad;	//RTV描述符堆
 		ComPtr<ID3D12DescriptorHeap>		pIDH_DBWSampleQuad;
 		ComPtr<ID3D12Resource>				pIVB_DBWQuad;	//QUAD顶点缓冲
 		ComPtr<ID3D12Resource>			    pICB_DBWMVO;	//常量缓冲
 
-		ComPtr<ID3D12Resource>				pIRes_DBWRenderTarget;  //Render Target
-		ComPtr<ID3D12Resource>				pIDS_DBWTex;
-		ComPtr<ID3D12DescriptorHeap>		pIDH_DBWRTVTex;
-		ComPtr<ID3D12DescriptorHeap>		pIDH_DBWDSVTex;
+		ComPtr<ID3D12Resource>				pIRes_DBWRenderTarget;  //2x width Render Target
+		ComPtr<ID3D12Resource>				pIDSTex;	//depth buffer
+		ComPtr<ID3D12DescriptorHeap>		pIDH_DBWRTV;	//RTV heap
+		ComPtr<ID3D12DescriptorHeap>		pIDH_DBWDSV;	//Depth view, DSV heap
 
-		//我们需要把SWAPCHAIN的Buffer也要作为纹理使用，需要创建描述符，放在pIDH_DBWRTVTex堆里？
-		ComPtr<ID3D12Resource>				pIDS_DBW_SWAPCHAIN_Tex;
+		ST_GRS_CB_MVO* pMOV = nullptr;		//MVP矩阵的映射CPU地址，更新循环中可以直接往里复制
+
+		//我们需要把SWAPCHAIN的Buffer也要作为纹理使用，需要描述符堆
+		ComPtr<ID3D12DescriptorHeap>				pIDH_DBW_SwapChainHeap;
 	}DBWQuad;
 
-	D3D12_VERTEX_BUFFER_VIEW			stVBViewQuad = {};
-	ST_GRS_CB_MVO*						pMOV = nullptr;
-	SIZE_T								szCBMOVBuf = GRS_UPPER(sizeof(ST_GRS_CB_MVO), 256);
+
 
 	// 场景物体参数
 	const UINT							nMaxObject = 3;
@@ -804,9 +809,8 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 				, IID_PPV_ARGS(&pIPSOQuad)));
 			GRS_SET_D3D12_DEBUGNAME_COMPTR(pIPSOQuad);
 		}
-
-		// LIhw. 离屏渲染目标
-		// 创建渲染目标纹理
+	
+		//离屏渲染目标, 创建渲染目标纹理
 		{
 			D3D12_RESOURCE_DESC stRenderTargetResDesc = {};
 			stRenderTargetResDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -991,6 +995,196 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 
 			pID3D12Device4->CreateSampler(&stSamplerDesc, pIDHSampleQuad->GetCPUDescriptorHandleForHeapStart());
 		}
+		
+		//Lihw  DBWQuad，创建相关资源
+		{
+			
+			//
+			//创建Swapchain buffer的SRV，我们用它做纹理
+
+			D3D12_DESCRIPTOR_HEAP_DESC stHeapDesc = {};
+			stHeapDesc.NumDescriptors = nFrameBackBufCount;
+			stHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+			stHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+
+			//SRV堆
+			GRS_THROW_IF_FAILED(pID3D12Device4->CreateDescriptorHeap(&stHeapDesc, IID_PPV_ARGS(&DBWQuad.pIDH_DBW_SwapChainHeap)));
+			//GRS_SET_D3D12_DEBUGNAME_COMPTR(pIDHQuad);
+
+			// 三个SRVs
+			D3D12_SHADER_RESOURCE_VIEW_DESC stSRVDesc = {};
+			stSRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			stSRVDesc.Format = emRTFormat;
+			stSRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			stSRVDesc.Texture2D.MipLevels = 1;
+
+			D3D12_CPU_DESCRIPTOR_HANDLE stSRVHandle = DBWQuad.pIDH_DBW_SwapChainHeap->GetCPUDescriptorHandleForHeapStart();
+
+			for (UINT i = 0; i < nFrameBackBufCount; i++)
+			{
+				pID3D12Device4->CreateShaderResourceView(pIARenderTargets[i].Get(), &stSRVDesc, stSRVHandle);
+				stSRVHandle.ptr += nSRVDescriptorSize;
+			}
+
+			//
+			//创建我们的离屏渲染目标
+
+			D3D12_RESOURCE_DESC stRenderTargetResDesc = {};
+			stRenderTargetResDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+			stRenderTargetResDesc.Alignment = 0;
+			stRenderTargetResDesc.Width = DBW_width;
+			stRenderTargetResDesc.Height = DBW_Height;
+			stRenderTargetResDesc.DepthOrArraySize = 1;
+			stRenderTargetResDesc.MipLevels = 1;
+			stRenderTargetResDesc.Format = emRTFormat;
+			stRenderTargetResDesc.SampleDesc.Count = 1;
+			stRenderTargetResDesc.SampleDesc.Quality = 0;
+			stRenderTargetResDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+			stRenderTargetResDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+			D3D12_CLEAR_VALUE stClear = {};
+			stClear.Format = emRTFormat;
+			memcpy(&stClear.Color, &f4RTTexClearColor, 4 * sizeof(float));
+
+			GRS_THROW_IF_FAILED(pID3D12Device4->CreateCommittedResource(
+				&stDefautHeapProps
+				, D3D12_HEAP_FLAG_NONE
+				, &stRenderTargetResDesc
+				, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
+				, &stClear
+				, IID_PPV_ARGS(&DBWQuad.pIRes_DBWRenderTarget)));
+			GRS_SET_D3D12_DEBUGNAME_COMPTR(DBWQuad.pIRes_DBWRenderTarget);
+
+			//创建RTV(渲染目标视图)描述符堆
+			D3D12_DESCRIPTOR_HEAP_DESC stRTVHeapDesc = {};
+			stRTVHeapDesc.NumDescriptors = 1;
+			stRTVHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+			stRTVHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+
+			GRS_THROW_IF_FAILED(pID3D12Device4->CreateDescriptorHeap(&stRTVHeapDesc, IID_PPV_ARGS(&DBWQuad.pIDH_DBWRTV)));
+			GRS_SET_D3D12_DEBUGNAME_COMPTR(DBWQuad.pIDH_DBWRTV);
+
+			pID3D12Device4->CreateRenderTargetView(pIResRenderTarget.Get(), nullptr, DBWQuad.pIDH_DBWRTV->GetCPUDescriptorHandleForHeapStart());
+
+			D3D12_CLEAR_VALUE stDepthOptimizedClearValue = {};
+			stDepthOptimizedClearValue.Format = emDSFormat;
+			stDepthOptimizedClearValue.DepthStencil.Depth = 1.0f;
+			stDepthOptimizedClearValue.DepthStencil.Stencil = 0;
+
+			D3D12_RESOURCE_DESC stDSResDesc = {};
+			stDSResDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+			stDSResDesc.Alignment = 0;
+			stDSResDesc.Width = DBW_width;
+			stDSResDesc.Height = DBW_Height;
+			stDSResDesc.DepthOrArraySize = 1;
+			stDSResDesc.MipLevels = 0;
+			stDSResDesc.Format = emDSFormat;
+			stDSResDesc.SampleDesc.Count = 1;
+			stDSResDesc.SampleDesc.Quality = 0;
+			stDSResDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+			stDSResDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+			//使用隐式默认堆创建一个深度蜡板缓冲区，
+			//因为基本上深度缓冲区会一直被使用，重用的意义不大，所以直接使用隐式堆，图方便
+			GRS_THROW_IF_FAILED(pID3D12Device4->CreateCommittedResource(
+				&stDefautHeapProps
+				, D3D12_HEAP_FLAG_NONE
+				, &stDSResDesc
+				, D3D12_RESOURCE_STATE_DEPTH_WRITE
+				, &stDepthOptimizedClearValue
+				, IID_PPV_ARGS(&DBWQuad.pIDSTex)
+			));
+			GRS_SET_D3D12_DEBUGNAME_COMPTR(DBWQuad.pIDSTex);
+
+			D3D12_DEPTH_STENCIL_VIEW_DESC stDepthStencilDesc = {};
+			stDepthStencilDesc.Format = emDSFormat;
+			stDepthStencilDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+			stDepthStencilDesc.Flags = D3D12_DSV_FLAG_NONE;
+
+			D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
+			dsvHeapDesc.NumDescriptors = 1;
+			dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+			dsvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+			GRS_THROW_IF_FAILED(pID3D12Device4->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&DBWQuad.pIDH_DBWDSV)));
+			GRS_SET_D3D12_DEBUGNAME_COMPTR(DBWQuad.pIDH_DBWDSV);
+
+			pID3D12Device4->CreateDepthStencilView(DBWQuad.pIDSTex.Get()
+				, &stDepthStencilDesc
+				, DBWQuad.pIDH_DBWDSV->GetCPUDescriptorHandleForHeapStart());
+
+
+			// 创建矩形框的顶点缓冲
+			{
+				//先尝试复用方形框的vertex buffer和他的VBV
+				///
+			}
+
+			// 创建DBW矩形框渲染用的SRV CBV Sample等
+			{
+				//MVP矩阵缓冲区
+				stBufferResSesc.Width = szCBMOVBuf;
+				GRS_THROW_IF_FAILED(pID3D12Device4->CreateCommittedResource(
+					&stUploadHeapProps
+					, D3D12_HEAP_FLAG_NONE
+					, &stBufferResSesc
+					, D3D12_RESOURCE_STATE_GENERIC_READ
+					, nullptr
+					, IID_PPV_ARGS(&DBWQuad.pICB_DBWMVO)));
+
+				GRS_THROW_IF_FAILED(DBWQuad.pICB_DBWMVO->Map(0, nullptr, reinterpret_cast<void**>(&DBWQuad.pMOV)));
+
+				D3D12_DESCRIPTOR_HEAP_DESC stHeapDesc = {};
+				stHeapDesc.NumDescriptors = 2;  //SRV CBV描述符都放在同一个堆
+				stHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+				stHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+
+				//SRV堆
+				GRS_THROW_IF_FAILED(pID3D12Device4->CreateDescriptorHeap(&stHeapDesc, IID_PPV_ARGS(&DBWQuad.pIDH_DBWQuad)));
+				GRS_SET_D3D12_DEBUGNAME_COMPTR(pIDHQuad);
+
+				// SRV
+				D3D12_SHADER_RESOURCE_VIEW_DESC stSRVDesc = {};
+				stSRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+				stSRVDesc.Format = emRTFormat;
+				stSRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+				stSRVDesc.Texture2D.MipLevels = 1;
+
+				// 使用渲染目标作为Shader的纹理资源
+				pID3D12Device4->CreateShaderResourceView(DBWQuad.pIRes_DBWRenderTarget.Get(), &stSRVDesc, DBWQuad.pIDH_DBWQuad->GetCPUDescriptorHandleForHeapStart());
+
+				// CBV
+				D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc = {};
+				cbvDesc.BufferLocation = DBWQuad.pICB_DBWMVO->GetGPUVirtualAddress();
+				cbvDesc.SizeInBytes = static_cast<UINT>(szCBMOVBuf);
+
+				D3D12_CPU_DESCRIPTOR_HANDLE stSRVCBVHandle = DBWQuad.pIDH_DBWQuad->GetCPUDescriptorHandleForHeapStart();
+				stSRVCBVHandle.ptr += nSRVDescriptorSize;
+
+				pID3D12Device4->CreateConstantBufferView(&cbvDesc, stSRVCBVHandle);
+
+				//Sampler，采样器
+				stHeapDesc.NumDescriptors = 1;  //只有一个Sample
+				stHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
+				GRS_THROW_IF_FAILED(pID3D12Device4->CreateDescriptorHeap(&stHeapDesc, IID_PPV_ARGS(&DBWQuad.pIDH_DBWSampleQuad)));
+				GRS_SET_D3D12_DEBUGNAME_COMPTR(pIDHSampleQuad);
+
+				// Sampler View
+				D3D12_SAMPLER_DESC stSamplerDesc = {};
+				stSamplerDesc.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+				stSamplerDesc.MinLOD = 0;
+				stSamplerDesc.MaxLOD = D3D12_FLOAT32_MAX;
+				stSamplerDesc.MipLODBias = 0.0f;
+				stSamplerDesc.MaxAnisotropy = 1;
+				stSamplerDesc.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+				stSamplerDesc.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+				stSamplerDesc.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+				stSamplerDesc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+
+				pID3D12Device4->CreateSampler(&stSamplerDesc, DBWQuad.pIDH_DBWSampleQuad->GetCPUDescriptorHandleForHeapStart());
+			}
+
+		}
+
 
 		// 准备多个物体参数
 		{
@@ -1402,7 +1596,7 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 			{//上一批命令已经执行结束，开始新一帧渲染
 				//OnUpdate()
 				{//计算旋转矩阵
-					n64tmCurrent = ::GetTickCount();
+					n64tmCurrent = ::GetTickCount64();
 					//计算旋转的角度：旋转角度(弧度) = 时间(秒) * 角速度(弧度/秒)
 					//下面这句代码相当于经典游戏消息循环中的OnUpdate函数中需要做的事情
 					dModelRotationYAngle += ((n64tmCurrent - n64tmFrameStart) / 1000.0f) * g_fPalstance;
@@ -1546,6 +1740,7 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 						pICmdList->SetDescriptorHeaps(_countof(ppHeapsSkybox), ppHeapsSkybox);
 						pICmdList->ExecuteBundle(stModuleParams[i].pIBundle.Get());
 					}
+					
 
 					// 渲染矩形框
 					// 设置矩形框的位置，即矩形左上角的坐标，注意因为正交投影的缘故，这里单位是像素
@@ -1590,6 +1785,41 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 					arCmdList.RemoveAll();
 					arCmdList.Add(pICmdList.Get());
 					pIMainCmdQueue->ExecuteCommandLists(static_cast<UINT>(arCmdList.GetCount()), arCmdList.GetData());
+
+
+					//Lihw. 把Framebuffer的内容绘制到DBW Quad，然后把Quad在复制到Framebuffer的右上角
+					{
+
+						//
+						//Framebuffer --> Quad
+
+						
+						//Quad --> Framebuffer右上角
+						//设置MVO
+						XMStoreFloat4x4(&pMOV->m_mMVO, xmMVO);
+
+						// 绘制矩形
+						pICmdList->SetGraphicsRootSignature(pIRSQuad.Get());
+						pICmdList->SetPipelineState(pIPSOQuad.Get());
+						ID3D12DescriptorHeap* ppHeapsQuad[] = { pIDHQuad.Get(),pIDHSampleQuad.Get() };
+						pICmdList->SetDescriptorHeaps(_countof(ppHeapsQuad), ppHeapsQuad);
+
+						//LIhw. 设置SRV、CBV和Sampler，跟矩形根签名以及创建的三种资源对应，通过GraphicRootDescriptorTable的槽位传递
+						D3D12_GPU_DESCRIPTOR_HANDLE stGPUCBVHandle(pIDHQuad->GetGPUDescriptorHandleForHeapStart());
+						pICmdList->SetGraphicsRootDescriptorTable(0, stGPUCBVHandle);
+						stGPUCBVHandle.ptr += nSRVDescriptorSize;
+						pICmdList->SetGraphicsRootDescriptorTable(1, stGPUCBVHandle);
+						pICmdList->SetGraphicsRootDescriptorTable(2, pIDHSampleQuad->GetGPUDescriptorHandleForHeapStart());
+
+						pICmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+						pICmdList->IASetVertexBuffers(0, 1, &stVBViewQuad);
+						//Draw Call！！！
+						pICmdList->DrawInstanced(nQuadVertexCnt, 1, 0, 0);
+
+
+					}
+
+
 
 					//提交画面
 					GRS_THROW_IF_FAILED(pISwapChain3->Present(1, 0));
