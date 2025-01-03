@@ -260,13 +260,14 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 	ComPtr<ID3D12Resource>				pIVBQuad;	//QUAD顶点缓冲
 	ComPtr<ID3D12Resource>			    pICBMVO;	//常量缓冲
 
-	D3D12_VERTEX_BUFFER_VIEW			stVBViewQuad = {};
+	D3D12_VERTEX_BUFFER_VIEW			stVBView = {};
 	ST_GRS_CB_MVO*						pMOV = nullptr;
 	SIZE_T								szCBMOVBuf = GRS_UPPER(sizeof(ST_GRS_CB_MVO), 256);
 
 	//Lihw. 双倍宽纹理
 	int  DBW_width = iWndWidth / 4 * 2;
 	int  DBW_Height = iWndHeight / 4;
+
 	struct dbwQuad {
 
 		//复制上面的QUAD需要的资源
@@ -286,6 +287,12 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 
 		//我们需要把SWAPCHAIN的Buffer也要作为纹理使用，需要描述符堆
 		ComPtr<ID3D12DescriptorHeap>				pIDH_DBW_SwapChainHeap;
+
+		ComPtr<ID3D12PipelineState>			pIPSO_DWBQuad;	//PSO	
+
+		D3D12_VIEWPORT						stViewPort;// = { 0.0f, 0.0f, static_cast<float>(DBW_width), static_cast<float>(DBW_Height), D3D12_MIN_DEPTH, D3D12_MAX_DEPTH };
+		D3D12_RECT							stScissorRect;// = { 0, 0, static_cast<LONG>(DBW_width), static_cast<LONG>(DBW_Height) };
+
 	}DBWQuad;
 
 
@@ -463,7 +470,7 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 			stSwapChainDesc.Width = iWndWidth;
 			stSwapChainDesc.Height = iWndHeight;
 			stSwapChainDesc.Format = emRTFormat;
-			stSwapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+			stSwapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT | DXGI_USAGE_SHADER_INPUT;
 			stSwapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
 			stSwapChainDesc.SampleDesc.Count = 1;
 
@@ -928,9 +935,9 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 			memcpy(pVertexDataBegin, stTriangleVertices, sizeof(stTriangleVertices));
 			pIVBQuad->Unmap(0, nullptr);
 
-			stVBViewQuad.BufferLocation = pIVBQuad->GetGPUVirtualAddress();
-			stVBViewQuad.StrideInBytes = sizeof(ST_GRS_VERTEX_QUAD);
-			stVBViewQuad.SizeInBytes = nQuadVBSize;
+			stVBView.BufferLocation = pIVBQuad->GetGPUVirtualAddress();
+			stVBView.StrideInBytes = sizeof(ST_GRS_VERTEX_QUAD);
+			stVBView.SizeInBytes = nQuadVBSize;
 		}
 
 		// 创建矩形框渲染需要的SRV CBV Sample等
@@ -998,6 +1005,9 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 		
 		//Lihw  DBWQuad，创建相关资源
 		{
+
+			DBWQuad.stViewPort = { 0.0f, 0.0f, static_cast<float>(DBW_width), static_cast<float>(DBW_Height), D3D12_MIN_DEPTH, D3D12_MAX_DEPTH };
+			DBWQuad.stScissorRect = { 0, 0, static_cast<LONG>(DBW_width), static_cast<LONG>(DBW_Height) };
 			
 			//
 			//创建Swapchain buffer的SRV，我们用它做纹理
@@ -1138,7 +1148,7 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 				stHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
 				stHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
 
-				//SRV堆
+				//SRV堆，   -->我们貌似不需要
 				GRS_THROW_IF_FAILED(pID3D12Device4->CreateDescriptorHeap(&stHeapDesc, IID_PPV_ARGS(&DBWQuad.pIDH_DBWQuad)));
 				GRS_SET_D3D12_DEBUGNAME_COMPTR(pIDHQuad);
 
@@ -1181,6 +1191,69 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 				stSamplerDesc.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
 
 				pID3D12Device4->CreateSampler(&stSamplerDesc, DBWQuad.pIDH_DBWSampleQuad->GetCPUDescriptorHandleForHeapStart());
+			}
+
+			
+			//
+			//创建Root signature and PSO
+			{
+
+				//
+				//我们先尝试复用Quad的signature，看起来只是一段代码
+
+				ComPtr<ID3DBlob> pIDBWBlobVertexShader;
+				ComPtr<ID3DBlob> pIDBWBlobPixelShader;
+#if defined(_DEBUG)
+				// Enable better shader debugging with the graphics debugging tools.
+				UINT compileFlags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+#else
+				UINT compileFlags = 0;
+#endif
+				compileFlags |= D3DCOMPILE_PACK_MATRIX_ROW_MAJOR;
+
+				TCHAR pszShaderFileName[MAX_PATH] = {};
+				StringCchPrintf(pszShaderFileName, MAX_PATH, _T("%s9-D3D12RenderToTexture\\Shader\\DBWQuad.hlsl"), pszAppPath);
+
+				GRS_THROW_IF_FAILED(D3DCompileFromFile(pszShaderFileName, nullptr, nullptr
+					, "VSMain", "vs_5_0", compileFlags, 0, &pIDBWBlobVertexShader, nullptr));
+				GRS_THROW_IF_FAILED(D3DCompileFromFile(pszShaderFileName, nullptr, nullptr
+					, "PSMain", "ps_5_0", compileFlags, 0, &pIDBWBlobPixelShader, nullptr));
+
+				
+				D3D12_INPUT_ELEMENT_DESC stInputElementDescs[] =
+				{
+					{ "POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+					{ "COLOR",	  0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 16, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+					{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,		 0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+				};
+
+				// 创建 graphics pipeline state object (PSO)对象
+				D3D12_GRAPHICS_PIPELINE_STATE_DESC stPSODesc = {};
+				stPSODesc.InputLayout = { stInputElementDescs, _countof(stInputElementDescs) };
+				stPSODesc.pRootSignature = pIRSQuad.Get();
+				stPSODesc.VS.BytecodeLength = pIDBWBlobVertexShader->GetBufferSize();
+				stPSODesc.VS.pShaderBytecode = pIDBWBlobVertexShader->GetBufferPointer();
+				stPSODesc.PS.BytecodeLength = pIDBWBlobPixelShader->GetBufferSize();
+				stPSODesc.PS.pShaderBytecode = pIDBWBlobPixelShader->GetBufferPointer();
+
+				stPSODesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+				stPSODesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
+
+				stPSODesc.BlendState.AlphaToCoverageEnable = FALSE;
+				stPSODesc.BlendState.IndependentBlendEnable = FALSE;
+				stPSODesc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+				stPSODesc.DepthStencilState.DepthEnable = FALSE;
+				stPSODesc.DepthStencilState.StencilEnable = FALSE;
+				stPSODesc.SampleMask = UINT_MAX;
+				stPSODesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+				stPSODesc.NumRenderTargets = 1;
+				stPSODesc.RTVFormats[0] = emRTFormat;
+				stPSODesc.SampleDesc.Count = 1;
+
+				GRS_THROW_IF_FAILED(pID3D12Device4->CreateGraphicsPipelineState(&stPSODesc
+					, IID_PPV_ARGS(&DBWQuad.pIPSO_DWBQuad)));
+				GRS_SET_D3D12_DEBUGNAME_COMPTR(DBWQuad.pIPSO_DWBQuad);
 			}
 
 		}
@@ -1639,6 +1712,7 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 					GRS_THROW_IF_FAILED(pICmdAlloc->Reset());
 					GRS_THROW_IF_FAILED(pICmdList->Reset(pICmdAlloc.Get(), pIPSOPass1.Get()));
 
+
 					//设置屏障将渲染目标纹理从资源转换为渲染目标状态
 					stRTVStateTransBarrier.Transition.pResource = pIResRenderTarget.Get();
 					stRTVStateTransBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
@@ -1771,13 +1845,13 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 					pICmdList->SetGraphicsRootDescriptorTable(2, pIDHSampleQuad->GetGPUDescriptorHandleForHeapStart());
 
 					pICmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-					pICmdList->IASetVertexBuffers(0, 1, &stVBViewQuad);
+					pICmdList->IASetVertexBuffers(0, 1, &stVBView);
 					//Draw Call！！！
 					pICmdList->DrawInstanced(nQuadVertexCnt, 1, 0, 0);
 					
 					stRTVStateTransBarrier.Transition.pResource = pIARenderTargets[nCurrentFrameIndex].Get();
 					stRTVStateTransBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-					stRTVStateTransBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+					stRTVStateTransBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;// D3D12_RESOURCE_STATE_PRESENT;
 					pICmdList->ResourceBarrier(1, &stRTVStateTransBarrier);
 
 					//关闭命令列表，去执行
@@ -1788,6 +1862,7 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 
 
 					//Lihw. 把Framebuffer的内容绘制到DBW Quad，然后把Quad在复制到Framebuffer的右上角
+#if 0
 					{
 
 						//
@@ -1796,29 +1871,89 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 						
 						//Quad --> Framebuffer右上角
 						//设置MVO
-						XMStoreFloat4x4(&pMOV->m_mMVO, xmMVO);
+						XMStoreFloat4x4(&DBWQuad.pMOV->m_mMVO, xmMVO);
+
+						D3D12_CPU_DESCRIPTOR_HANDLE stRTVHandle = DBWQuad.pIDH_DBWRTV->GetCPUDescriptorHandleForHeapStart();
+						D3D12_CPU_DESCRIPTOR_HANDLE stDSVHandle = DBWQuad.pIDH_DBWDSV->GetCPUDescriptorHandleForHeapStart();
+
+						//设置渲染目标
+						pICmdList->OMSetRenderTargets(1, &stRTVHandle, FALSE, &stDSVHandle);
+
+						pICmdList->RSSetViewports(1, &DBWQuad.stViewPort);
+						pICmdList->RSSetScissorRects(1, &DBWQuad.stScissorRect);
+
+						pICmdList->ClearRenderTargetView(stRTVHandle, f4RTTexClearColor, 0, nullptr);
+						pICmdList->ClearDepthStencilView(stDSVHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
 
 						// 绘制矩形
-						pICmdList->SetGraphicsRootSignature(pIRSQuad.Get());
-						pICmdList->SetPipelineState(pIPSOQuad.Get());
-						ID3D12DescriptorHeap* ppHeapsQuad[] = { pIDHQuad.Get(),pIDHSampleQuad.Get() };
-						pICmdList->SetDescriptorHeaps(_countof(ppHeapsQuad), ppHeapsQuad);
+						pICmdList->SetGraphicsRootSignature(pIRSQuad.Get());  //复用
+						pICmdList->SetPipelineState(DBWQuad.pIPSO_DWBQuad.Get());
 
-						//LIhw. 设置SRV、CBV和Sampler，跟矩形根签名以及创建的三种资源对应，通过GraphicRootDescriptorTable的槽位传递
-						D3D12_GPU_DESCRIPTOR_HANDLE stGPUCBVHandle(pIDHQuad->GetGPUDescriptorHandleForHeapStart());
+						
+						// 设置SRV、CBV和Sampler，跟矩形根签名以及创建的三种资源对应，通过GraphicRootDescriptorTable的槽位传递
+						// 
+						//指向三个堆，
+						ID3D12DescriptorHeap* ppHeapsQuad[] = { DBWQuad.pIDH_DBW_SwapChainHeap.Get(),DBWQuad.pIDH_DBWQuad.Get(),DBWQuad.pIDH_DBWSampleQuad.Get()};
+						pICmdList->SetDescriptorHeaps(_countof(ppHeapsQuad), ppHeapsQuad);
+						
+						//偏移到当前framebuffer对应的HANDLE
+						D3D12_GPU_DESCRIPTOR_HANDLE stGPUCBVHandle(DBWQuad.pIDH_DBW_SwapChainHeap->GetGPUDescriptorHandleForHeapStart());						
+						stGPUCBVHandle.ptr += nCurrentFrameIndex*nSRVDescriptorSize;
+
 						pICmdList->SetGraphicsRootDescriptorTable(0, stGPUCBVHandle);
+
+						stGPUCBVHandle = DBWQuad.pIDH_DBWQuad->GetGPUDescriptorHandleForHeapStart();
 						stGPUCBVHandle.ptr += nSRVDescriptorSize;
 						pICmdList->SetGraphicsRootDescriptorTable(1, stGPUCBVHandle);
-						pICmdList->SetGraphicsRootDescriptorTable(2, pIDHSampleQuad->GetGPUDescriptorHandleForHeapStart());
+
+						pICmdList->SetGraphicsRootDescriptorTable(2, DBWQuad.pIDH_DBWSampleQuad->GetGPUDescriptorHandleForHeapStart());
 
 						pICmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-						pICmdList->IASetVertexBuffers(0, 1, &stVBViewQuad);
+						pICmdList->IASetVertexBuffers(0, 1, &stVBView);
 						//Draw Call！！！
-						pICmdList->DrawInstanced(nQuadVertexCnt, 1, 0, 0);
+						//pICmdList->DrawInstanced(nQuadVertexCnt, 1, 0, 0);
+
+
 
 
 					}
 
+#endif
+
+					n64fence = n64FenceValue;
+					GRS_THROW_IF_FAILED(pIMainCmdQueue->Signal(pIFence.Get(), n64fence));
+					n64FenceValue++;
+					if (pIFence->GetCompletedValue() < n64fence)
+					{
+						GRS_THROW_IF_FAILED(pIFence->SetEventOnCompletion(n64fence, hEventFence));
+						WaitForSingleObject(hEventFence, INFINITE);
+					}					
+
+
+					GRS_THROW_IF_FAILED(pICmdAlloc->Reset());
+					GRS_THROW_IF_FAILED(pICmdList->Reset(pICmdAlloc.Get(), pIPSOPass1.Get()));
+
+					//偏移描述符指针到指定帧缓冲视图位置
+					stRTVHandle = pIRTVHeap->GetCPUDescriptorHandleForHeapStart();
+					stRTVHandle.ptr += (nCurrentFrameIndex * nRTVDescriptorSize);
+					stDSVHandle = pIDSVHeap->GetCPUDescriptorHandleForHeapStart();
+					//设置渲染目标
+					pICmdList->OMSetRenderTargets(1, &stRTVHandle, FALSE, &stDSVHandle);
+					pICmdList->RSSetViewports(1, &stViewPort);
+					pICmdList->RSSetScissorRects(1, &stScissorRect);
+
+
+					pICmdList->RSSetViewports(1, &stViewPort);
+					pICmdList->RSSetScissorRects(1, &stScissorRect);
+					pICmdList->ClearRenderTargetView(stRTVHandle, arClearColor, 0, nullptr);
+					pICmdList->ClearDepthStencilView(stDSVHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+
+					//关闭命令列表，去执行
+					GRS_THROW_IF_FAILED(pICmdList->Close());
+					arCmdList.RemoveAll();
+					arCmdList.Add(pICmdList.Get());
+					pIMainCmdQueue->ExecuteCommandLists(static_cast<UINT>(arCmdList.GetCount()), arCmdList.GetData());
 
 
 					//提交画面

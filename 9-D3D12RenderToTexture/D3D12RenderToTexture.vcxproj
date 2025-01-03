@@ -158,7 +158,7 @@
     </None>
   </ItemGroup>
   <ItemGroup>
-    <None Include="Shader\DBWTextureCube.hlsl">
+    <None Include="Shader\DBWQuad.hlsl">
       <FileType>Document</FileType>
     </None>
   </ItemGroup>
