@@ -21,6 +21,7 @@
     <None Include="Shader\shaders.hlsl">
       <Filter>Shader</Filter>
     </None>
+    <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="1-D3D12Trigger.cpp">
