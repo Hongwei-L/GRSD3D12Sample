@@ -28,5 +28,24 @@ float4 PSMain(PSInput input) : SV_TARGET
 {
     float2 uv;
     uv = input.m_v2UV; // * float2(0.8, 0.8);
-    return g_texture.Sample(g_sampler, uv);
+    
+    if (uv.x < 0.5)
+    {
+        
+        uv.x = (uv.x + 0.5) * 2;
+        
+        float4 color = g_texture.Sample(g_sampler, uv);
+        color = color * float4(0.9, 0.4, 0.1,1);
+        return color;
+    }
+     
+    else
+    {
+        uv.x = (uv.x - 0.5) * 2;
+        float4 color = g_texture.Sample(g_sampler, uv);
+        color = color * float4(0.1, 0.8, 0.2,1);
+        return color;
+    }     
+    
+    
 }

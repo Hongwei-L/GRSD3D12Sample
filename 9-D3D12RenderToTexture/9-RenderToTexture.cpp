@@ -1647,6 +1647,10 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 		// Orthographic
 		XMMATRIX mxOrthographic = XMMatrixScaling(1.0f, -1.0f, 1.0f); //上下翻转，配合之前的Quad的Vertex坐标一起使用
 		mxOrthographic = XMMatrixMultiply(mxOrthographic, XMMatrixTranslation(-0.5f, +0.5f, 0.0f)); //微量偏移，矫正像素位置
+
+		//lihw. 增加一个变量
+		XMMATRIX mxOrthographicDBW= mxOrthographic;
+
 		mxOrthographic = XMMatrixMultiply(
 			mxOrthographic
 			, XMMatrixOrthographicOffCenterLH(stViewPort.TopLeftX
@@ -1658,6 +1662,19 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 		);
 		// View * Orthographic 正交投影时，视矩阵通常是一个单位矩阵，这里之所以乘一下以表示与射影投影一致
 		mxOrthographic = XMMatrixMultiply(XMMatrixIdentity(), mxOrthographic);
+
+
+		mxOrthographicDBW = XMMatrixMultiply(
+			mxOrthographicDBW
+			, XMMatrixOrthographicOffCenterLH(DBWQuad.stViewPort.TopLeftX
+				, DBWQuad.stViewPort.TopLeftX + DBWQuad.stViewPort.Width
+				, -(DBWQuad.stViewPort.TopLeftY + DBWQuad.stViewPort.Height)
+				, -DBWQuad.stViewPort.TopLeftY
+				, DBWQuad.stViewPort.MinDepth
+				, DBWQuad.stViewPort.MaxDepth)
+		);
+		mxOrthographicDBW = XMMatrixMultiply(XMMatrixIdentity(), mxOrthographicDBW);
+
 
 		DWORD dwRet = 0;
 		BOOL bExit = FALSE;
@@ -1891,6 +1908,17 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 
 						
 						//Quad --> Framebuffer右上角
+						//设置MVO
+						// 渲染矩形框
+						// 设置矩形框的位置，即矩形左上角的坐标，注意因为正交投影的缘故，这里单位是像素
+						XMMATRIX xmMVO = mxOrthographicDBW;
+
+						// 设置矩形框的大小，单位同样是像素
+						XMMATRIX tmp = XMMatrixScaling((float)DBW_width, (float)DBW_Height, 1.0f);
+						xmMVO = XMMatrixMultiply(
+							tmp
+							, xmMVO);
+
 						//设置MVO
 						XMStoreFloat4x4(&DBWQuad.pMOV->m_mMVO, xmMVO);
 
