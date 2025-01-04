@@ -32,10 +32,10 @@ float4 PSMain(PSInput input) : SV_TARGET
     if (uv.x < 0.5)
     {
         
-        uv.x = (uv.x + 0.5) * 2;
+        uv.x = uv.x  * 2;
         
         float4 color = g_texture.Sample(g_sampler, uv);
-        color = color * float4(0.9, 0.4, 0.1,1);
+        color = color * float4(0.9, 0.4, 0.1,1);    //ºì×Ø
         return color;
     }
      
@@ -43,7 +43,7 @@ float4 PSMain(PSInput input) : SV_TARGET
     {
         uv.x = (uv.x - 0.5) * 2;
         float4 color = g_texture.Sample(g_sampler, uv);
-        color = color * float4(0.1, 0.8, 0.2,1);
+        color = color * float4(0.1, 0.8, 0.2,1);    //Æ«ÂÌ
         return color;
     }     
     

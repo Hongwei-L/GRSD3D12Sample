@@ -203,6 +203,10 @@ XMFLOAT3 g_f3HeapUp2 = XMFLOAT3(0.0f, 0.0f, 1.0f);    //头部正上方位置，注意第二
 LRESULT CALLBACK    WndProc(HWND, UINT, WPARAM, LPARAM);
 BOOL LoadMeshVertex(const CHAR*pszMeshFileName, UINT&nVertexCnt, ST_GRS_VERTEX*&ppVertex, UINT*&ppIndices);
 
+
+//Lihw
+bool	g_bShowDBW = true;
+
 int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    lpCmdLine, int nCmdShow)
 {
 	::CoInitialize(nullptr);  //for COM
@@ -275,6 +279,7 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 	//Lihw. 双倍宽纹理
 	int  DBW_width = iWndWidth / 4 * 2;
 	int  DBW_Height = iWndHeight / 4;
+	
 
 	struct dbwQuad {
 
@@ -1888,6 +1893,7 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 
 					//Lihw. 把Framebuffer的内容绘制到DBW Quad，然后把Quad在复制到Framebuffer的右上角
 #if 1
+					if (g_bShowDBW)
 					{
 
 						n64fence = n64FenceValue;
@@ -2200,6 +2206,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		if ('a' == n16KeyCode || 'A' == n16KeyCode)
 		{
 			move.x -= 1.0f;
+		}
+
+		if ('z' == n16KeyCode || 'Z' == n16KeyCode)
+		{
+			g_bShowDBW = !g_bShowDBW;
 		}
 
 		if (fabs(move.x) > 0.1f && fabs(move.z) > 0.1f)
