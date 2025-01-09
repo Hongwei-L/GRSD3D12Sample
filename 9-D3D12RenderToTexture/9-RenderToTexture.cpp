@@ -205,7 +205,7 @@ BOOL LoadMeshVertex(const CHAR*pszMeshFileName, UINT&nVertexCnt, ST_GRS_VERTEX*&
 
 
 //Lihw
-bool	g_bShowDBW = true;
+bool	g_bShowDBW = false;
 
 int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    lpCmdLine, int nCmdShow)
 {
@@ -285,7 +285,7 @@ int APIENTRY _tWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR    l
 
 		//复制上面的QUAD需要的资源
 		//ComPtr<ID3D12RootSignature>			pIRS_DBWQuad;
-		ComPtr<ID3D12PipelineState>			pIPS_DBWOQuad;
+		//ComPtr<ID3D12PipelineState>			pIPS_DBWOQuad;
 		ComPtr<ID3D12DescriptorHeap>		pIDH_DBWQuad;	//RTV描述符堆
 		ComPtr<ID3D12DescriptorHeap>		pIDH_DBWSampleQuad;
 		ComPtr<ID3D12Resource>				pIVB_DBWQuad;	//QUAD顶点缓冲
